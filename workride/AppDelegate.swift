@@ -7,15 +7,52 @@
 //
 
 import UIKit
+import Firebase
+import FirebaseMessaging
+import FirebaseInstanceID
+import FirebaseDatabase
+import UserNotifications
+import GoogleMaps
 
 @UIApplicationMain
-class AppDelegate: UIResponder, UIApplicationDelegate {
+class AppDelegate: UIResponder, UIApplicationDelegate, UNUserNotificationCenterDelegate {
 
     var window: UIWindow?
 
-
+    // AIzaSyAItzHL6rtfpJGQIiD8ctO51wsD8w9zH-U
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplicationLaunchOptionsKey: Any]?) -> Bool {
         // Override point for customization after application launch.
+        
+        FirebaseApp.configure()
+        STPPaymentConfiguration.shared().publishableKey = "pk_test_p4q6oRnr5lGGQQ9i1oEUUgBU"
+        GMSServices.provideAPIKey("AIzaSyD14fxBsfUQ5srn1kHk7O4l4DkjZsSa_WU")
+        
+        if #available(iOS 10.0, *) {
+            let authOptions: UNAuthorizationOptions = [.alert, .badge, .sound]
+            UNNotificationSound.default()
+            UNUserNotificationCenter.current().requestAuthorization(
+                options: authOptions,
+                completionHandler: {_, _ in })
+            
+            // For iOS 10 display notification (sent via APNS)
+            UNUserNotificationCenter.current().delegate = self
+            // For iOS 10 data message (sent via FCM)
+            //FIRMessaging.messaging().remoteMessageDelegate = self
+            
+        } else {
+            let settings: UIUserNotificationSettings =
+                UIUserNotificationSettings(types: [.alert, .badge, .sound], categories: nil)
+            application.registerUserNotificationSettings(settings)
+        }
+        
+        application.registerForRemoteNotifications()
+        
+        NotificationCenter.default.addObserver(self, selector: #selector(tokenRefreshNotification(_:)), name: NSNotification.Name.InstanceIDTokenRefresh, object: nil)
+        
+        connectToFcm() 
+        
+        print("application.isRegisteredForRemoteNotifications: \(application.isRegisteredForRemoteNotifications)")
+        
         return true
     }
 
@@ -40,7 +77,89 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     func applicationWillTerminate(_ application: UIApplication) {
         // Called when the application is about to terminate. Save data if appropriate. See also applicationDidEnterBackground:.
     }
+    
+    // MARK: remote notification methods
+    func application(_ application: UIApplication, didReceiveRemoteNotification userInfo: [AnyHashable: Any]) {
+        // If you are receiving a notification message while your app is in the background,
+        // this callback will not be fired till the user taps on the notification launching the application.
+        // TODO: Handle data of notification
+        
+        // Print message ID.
+        if let messageID = userInfo["gcm.message_id"] {
+            print("Message ID: \(messageID)")
+        }
+        
+        // Print full message.
+        print(userInfo)
+    }
+    
+    func application(_ application: UIApplication, didReceiveRemoteNotification userInfo: [AnyHashable: Any],
+                     fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void) {
+        // If you are receiving a notification message while your app is in the background,
+        // this callback will not be fired till the user taps on the notification launching the application.
+        // TODO: Handle data of notification
+        
+        // Print message ID.
+        if let messageID = userInfo["gcm.message_id"] {
+            print("Message ID: \(messageID)")
+        }
+        
+        // Print full message.
+        print(userInfo)
+        
+        completionHandler(UIBackgroundFetchResult.newData)
+    }
 
+    
+    func application(_ application: UIApplication,
+                     didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
+        
+        print("attempting to set apns token with device token: \(deviceToken)\n")
+        InstanceID.instanceID().setAPNSToken(deviceToken as Data, type: InstanceIDAPNSTokenType.sandbox)
+        
+        if let token = InstanceID.instanceID().token() {
+            print("token: \(token)")
+            
+            CurrentUser.FirebaseInstanceToken = token
+            
+            print("didRegisterForRemoteNotificationsWithDeviceToken: \(token)")
+            //print("FIRInstanceID token: \(CurrentUser.FirebaseInstanceToken)")
+        } else {
+            print("nope.")
+        }
+        
+    }
+    
+    func application(_ application: UIApplication, didFailToRegisterForRemoteNotificationsWithError error: Error) {
+        print("didFailToRegisterForRemoteNotificationsWithError: \(error)")
+    }
+    
+    func tokenRefreshNotification(_ notification: Notification) {
+        if let refreshedToken = InstanceID.instanceID().token() {
+            
+            CurrentUser.FirebaseInstanceToken = refreshedToken
+            if CurrentUser.firebaseUID != "" {
+                let notificationRef = Database.database().reference().child("notifications").child("deviceid").child(CurrentUser.firebaseUID).child("token")
+                notificationRef.setValue(refreshedToken)
+            }
+            
+            //print("InstanceID token: \(CurrentUser.FirebaseInstanceToken)")
+            print("InstanceID token: \(refreshedToken)")
+        }
+        
+        // Connect to FCM since connection may have failed when attempted before having a token.
+        connectToFcm()
+    }
+    
+    func connectToFcm() {
+        Messaging.messaging().connect { (error) in
+            if (error != nil) {
+                print("Unable to connect with FCM. \(String(describing: error))")
+            } else {
+                print("Connected to FCM.")
+            }
+        }
+    }
 
 }
 
